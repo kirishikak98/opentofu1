@@ -213,62 +213,54 @@ func (plan Plan) renderHuman(renderer Renderer, mode plans.Mode, opts ...plans.Q
 		}
 	}
 
-// Helper function to format plan message
-func formatPlanMessage(importingCount, forgettingCount int, counts map[string]int) string {
-    planMessage := "\n[bold]Plan:[reset] "
+	if len(changes) > 0 {
+		if checkOpts(plans.Errored) {
+			renderer.Streams.Printf("\nOpenTofu planned the following actions, but then encountered a problem:\n")
+		} else {
+			renderer.Streams.Printf("\nOpenTofu will perform the following actions:\n")
+		}
 
-    if importingCount > 0 {
-        planMessage += fmt.Sprintf("%d to import, ", importingCount)
-    }
+		for _, change := range changes {
+			diff, render := renderHumanDiff(renderer, change, proposedChange)
+			if render {
+				fmt.Fprintln(renderer.Streams.Stdout.File)
+				renderer.Streams.Println(diff)
+			}
+		}
 
-    planMessage += fmt.Sprintf("%d to add, %d to change, %d to destroy",
-        counts[plans.Create]+counts[plans.DeleteThenCreate]+counts[plans.CreateThenDelete],
-        counts[plans.Update],
-        counts[plans.Delete]+counts[plans.DeleteThenCreate]+counts[plans.CreateThenDelete])
+planMessage := "\n[bold]Plan:[reset] "
 
-    if forgettingCount > 0 {
-        planMessage += fmt.Sprintf(", %d to forget", forgettingCount)
-    }
+if importingCount > 0 {
+    planMessage += fmt.Sprintf("%d to import, ", importingCount)
+}
+planMessage += fmt.Sprintf("%d to add, %d to change, %d to destroy",
+    counts[plans.Create]+counts[plans.DeleteThenCreate]+counts[plans.CreateThenDelete],
+    counts[plans.Update],
+    counts[plans.Delete]+counts[plans.DeleteThenCreate]+counts[plans.CreateThenDelete])
 
-    return planMessage + ".\n"
+if forgettingCount > 0 {
+    planMessage += fmt.Sprintf(", %d to forget", forgettingCount)
 }
 
-// Main function refactor
-if len(changes) > 0 {
-    // Conditionally print plan description
-    message := "\nOpenTofu will perform the following actions:\n"
-    if checkOpts(plans.Errored) {
-        message = "\nOpenTofu planned the following actions, but then encountered a problem:\n"
-    }
-    renderer.Streams.Printf(message)
+planMessage += ".\n"
+renderer.Streams.Printf(renderer.Colorize.Color(planMessage))  // Corrected line
 
-    // Render changes with human diff
-    for _, change := range changes {
-        diff, render := renderHumanDiff(renderer, change, proposedChange)
-        if render {
-            fmt.Fprintln(renderer.Streams.Stdout.File)
-            renderer.Streams.Println(diff)
-        }
-    }
 
-    // Print plan message
-    planMessage := formatPlanMessage(importingCount, forgettingCount, counts)
-    renderer.Streams.Printf(renderer.Colorize.Color(planMessage))
+	if len(outputs) > 0 {
+		renderer.Streams.Print("\nChanges to Outputs:\n")
+		renderer.Streams.Printf("%s\n", outputs)
+
+		if len(counts) == 0 {
+			// If we have output changes but not resource changes then we
+			// won't have output any indication about the changes at all yet,
+			// so we need some extra context about what it would mean to
+			// apply a change that _only_ includes output changes.
+			renderer.Streams.Println(format.WordWrap(
+				"\nYou can apply this plan to save these new output values to the OpenTofu state, without changing any real infrastructure.",
+				renderer.Streams.Stdout.Columns()))
+		}
+	}
 }
-
-if len(outputs) > 0 {
-    // Handle output changes
-    renderer.Streams.Print("\nChanges to Outputs:\n")
-    renderer.Streams.Printf("%s\n", outputs)
-
-    // Special message for output-only changes
-    if len(counts) == 0 {
-        renderer.Streams.Println(format.WordWrap(
-            "\nYou can apply this plan to save these new output values to the OpenTofu state, without changing any real infrastructure.",
-            renderer.Streams.Stdout.Columns()))
-    }
-}
-
 
 func renderHumanDiffOutputs(renderer Renderer, outputs map[string]computed.Diff) string {
 	var rendered []string
