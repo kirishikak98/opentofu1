@@ -233,7 +233,7 @@ planMessage := "\n[bold]Plan:[reset] "
 if importingCount > 0 {
     planMessage += fmt.Sprintf("%d to import, ", importingCount)
 }
-planMessage += fmt.Sprintf("%d to add, %d to change, %d to destroy",
+    planMessage += fmt.Sprintf("%d to add, %d to change, %d to destroy",
     counts[plans.Create]+counts[plans.DeleteThenCreate]+counts[plans.CreateThenDelete],
     counts[plans.Update],
     counts[plans.Delete]+counts[plans.DeleteThenCreate]+counts[plans.CreateThenDelete])
