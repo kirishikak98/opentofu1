@@ -64,6 +64,7 @@ func (plan Plan) renderHuman(renderer Renderer, mode plans.Mode, opts ...plans.Q
 	willPrintResourceChanges := false
 	counts := make(map[plans.Action]int)
 	importingCount := 0
+	forgettingCount := 0
 	var changes []diff
 	for _, diff := range diffs.changes {
 		action := jsonplan.UnmarshalActions(diff.change.Change.Actions)
@@ -80,6 +81,10 @@ func (plan Plan) renderHuman(renderer Renderer, mode plans.Mode, opts ...plans.Q
 
 		if diff.Importing() {
 			importingCount++
+		}
+
+		if action == plans.Forget {
+			forgettingCount++
 		}
 
 		// Don't count move-only changes
@@ -208,66 +213,53 @@ func (plan Plan) renderHuman(renderer Renderer, mode plans.Mode, opts ...plans.Q
 		}
 	}
 
-case plans.Read:
-	comments = append(comments, fmt.Sprintf("[bold]  # %s[reset] will be read during apply", dispAddr))
-	reasonComments := map[string]string{
-		jsonplan.ResourceInstanceReadBecauseConfigUnknown: "  # (config refers to values not yet known)",
-		jsonplan.ResourceInstanceReadBecauseDependencyPending: "  # (depends on a resource or a module with changes pending)",
-		jsonplan.ResourceInstanceReadBecauseCheckNested: "  # (config will be reloaded to verify a check block)",
-	}
-	if reason, ok := reasonComments[resource.ActionReason]; ok {
-		comments = append(comments, reason)
-	}
-case plans.Update:
-	updateReasons := map[string]string{
-		proposedChange: "[bold]  # %s[reset] will be updated in-place",
-		detectedDrift: "[bold]  # %s[reset] has changed",
-	}
-	comment := updateReasons[changeCause]
-	if comment == "" {
-		comment = fmt.Sprintf("[bold]  # %s[reset] update (unknown reason %s)", dispAddr, changeCause)
-	}
-	comments = append(comments, fmt.Sprintf(comment, dispAddr))
-case plans.CreateThenDelete, plans.DeleteThenCreate:
-	replaceReasons := map[string]string{
-		jsonplan.ResourceInstanceReplaceBecauseTainted: "[bold]  # %s[reset] is tainted, so it must be [bold][red]replaced[reset]",
-		jsonplan.ResourceInstanceReplaceByRequest: "[bold]  # %s[reset] will be [bold][red]replaced[reset], as requested",
-		jsonplan.ResourceInstanceReplaceByTriggers: "[bold]  # %s[reset] will be [bold][red]replaced[reset] due to changes in replace_triggered_by",
-	}
-	if reason, ok := replaceReasons[resource.ActionReason]; ok {
-		comments = append(comments, fmt.Sprintf(reason, dispAddr))
-	} else {
-		comments = append(comments, fmt.Sprintf("[bold]  # %s[reset] must be [bold][red]replaced[reset]", dispAddr))
-	}
-case plans.Delete:
-	deleteReasons := map[string]string{
-		proposedChange: "[bold]  # %s[reset] will be [bold][red]destroyed[reset]",
-		detectedDrift: "[bold]  # %s[reset] has been deleted",
-	}
-	comment := deleteReasons[changeCause]
-	if comment == "" {
-		comment = fmt.Sprintf("[bold]  # %s[reset] delete (unknown reason %s)", dispAddr, changeCause)
-	}
-	comments = append(comments, fmt.Sprintf(comment, dispAddr))
+	if len(changes) > 0 {
+		if checkOpts(plans.Errored) {
+			renderer.Streams.Printf("\nOpenTofu planned the following actions, but then encountered a problem:\n")
+		} else {
+			renderer.Streams.Printf("\nOpenTofu will perform the following actions:\n")
+		}
+
+		for _, change := range changes {
+			diff, render := renderHumanDiff(renderer, change, proposedChange)
+			if render {
+				fmt.Fprintln(renderer.Streams.Stdout.File)
+				renderer.Streams.Println(diff)
+			}
+		}
+
+		planMessage := "\n[bold]Plan:[reset] "
+
+		if importingCount > 0 {
+			planMessage += fmt.Sprintf("%d to import, ", importingCount)
+		}
+		planMessage += fmt.Sprintf("%d to add, %d to change, %d to destroy",
+			counts[plans.Create]+counts[plans.DeleteThenCreate]+counts[plans.CreateThenDelete],
+			counts[plans.Update],
+			counts[plans.Delete]+counts[plans.DeleteThenCreate]+counts[plans.CreateThenDelete])
 	
-	additionalDeleteReasons := map[string]string{
-		jsonplan.ResourceInstanceDeleteBecauseNoResourceConfig: "  # (because %s.%s is not in configuration)",
-		jsonplan.ResourceInstanceDeleteBecauseNoMoveTarget: "  # (because %s was moved to %s, which is not in configuration)",
-		jsonplan.ResourceInstanceDeleteBecauseNoModule: "  # (because %s is not in configuration)",
-		jsonplan.ResourceInstanceDeleteBecauseWrongRepetition: "  # (because resource uses count or for_each)",
+		if forgettingCount > 0 {
+			planMessage += fmt.Sprintf(", %d to forget", forgettingCount)
+		}
+	
+		planMessage += ".\n"
+		renderer.Streams.Printf(renderer.Colorize.Color(planMessage))
+
+	if len(outputs) > 0 {
+		renderer.Streams.Print("\nChanges to Outputs:\n")
+		renderer.Streams.Printf("%s\n", outputs)
+
+		if len(counts) == 0 {
+			// If we have output changes but not resource changes then we
+			// won't have output any indication about the changes at all yet,
+			// so we need some extra context about what it would mean to
+			// apply a change that _only_ includes output changes.
+			renderer.Streams.Println(format.WordWrap(
+				"\nYou can apply this plan to save these new output values to the OpenTofu state, without changing any real infrastructure.",
+				renderer.Streams.Stdout.Columns()))
+		}
 	}
-	if reason, ok := additionalDeleteReasons[resource.ActionReason]; ok {
-		comments = append(comments, fmt.Sprintf(reason, resource.Type, resource.Name))
-	}
-case plans.Forget:
-	comments = append(comments, fmt.Sprintf("[bold]  # %s[reset] will be removed from the OpenTofu state [bold][red]but will not be destroyed[reset]", dispAddr))
-default:
-	comments = append(comments, fmt.Sprintf("%s has an action the plan renderer doesn't support (this is a bug)", dispAddr))
 }
-
-
-
-
 
 func renderHumanDiffOutputs(renderer Renderer, outputs map[string]computed.Diff) string {
 	var rendered []string
